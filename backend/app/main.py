@@ -16,7 +16,8 @@ AI_MODEL = os.getenv("AI_MODEL", "gpt-5-mini")
 def get_openai_client():
     return OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
 app = FastAPI(title="DealFlowTracker", version="1.0.0")
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5178,http://localhost:3000").split(",")
+_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()] if _origins_env else ["*"]
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dealflow.db")
 if DATABASE_URL.startswith("postgres://"):
