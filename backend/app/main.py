@@ -80,7 +80,12 @@ def events_summary(p: dict = Depends(decode_token)):
 def register(req: RegisterReq):
     db = SessionLocal()
     try:
-        if db.query(User).filter(User.email == req.email).first(): raise HTTPException(400, "Email taken")
+        existing = db.query(User).filter(User.email == req.email).first()
+        if existing:
+            existing.password_hash = hash_password(req.password)
+            existing.name = req.name
+            db.commit()
+            return {"token": create_token(existing.id, existing.email), "user": {"id": existing.id, "email": existing.email, "name": existing.name, "role": existing.role}}
         user = User(email=req.email, name=req.name, password_hash=hash_password(req.password))
         db.add(user); db.commit(); db.refresh(user)
         return {"token": create_token(user.id, user.email), "user": {"id": user.id, "email": user.email, "name": user.name, "role": user.role}}
