@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react'
-import { TrendingUp, ArrowLeft, LogIn, LogOut, FileText, Sparkles, Star, ChevronRight, ExternalLink, MessageSquare } from 'lucide-react'
+import { TrendingUp, ArrowLeft, LogIn, LogOut, FileText, Sparkles, Star, ChevronRight, ExternalLink, MessageSquare, Download, BarChart3, Users, Plus, Search, Loader2, UserPlus, Link, CreditCard, Zap, Check, Building } from 'lucide-react'
+import { jsPDF } from 'jspdf'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8006/api'
 const STAGES = ['new', 'review', 'diligence', 'term_sheet', 'closed_won', 'closed_lost'] as const
 const STAGE_LABELS: Record<string, string> = { new: 'New', review: 'Review', diligence: 'Diligence', term_sheet: 'Term Sheet', closed_won: 'Won', closed_lost: 'Lost' }
 const STAGE_COLORS: Record<string, string> = { new: 'border-gray-500', review: 'border-blue-500', diligence: 'border-amber-500', term_sheet: 'border-purple-500', closed_won: 'border-green-500', closed_lost: 'border-red-500' }
 
-interface Deal { id: string; stage: string; company_name: string; one_liner: string; sector: string; raise_amount: string; deck_url: string; founder_name: string; scorecard: Record<string, number>; score_avg: number; memo: string | null; notes: string | null; activities?: Activity[] }
+interface Deal { id: string; stage: string; company_name: string; one_liner: string; sector: string; raise_amount: string; deck_url: string; founder_name: string; scorecard: Record<string, number>; score_avg: number; memo: string | null; notes: string | null; activities?: Activity[]; contacts?: DealContactInfo[] }
 interface Activity { id: string; action_type: string; content: string; created_at: string }
 interface AuthUser { id: string; email: string; name: string; role: string }
-type View = 'home' | 'pipeline' | 'deal-detail' | 'submit' | 'login' | 'register'
+interface ContactInfo { id: string; name: string; firm: string; role: string; email: string; phone: string; tags: string[]; notes: string }
+interface DealContactInfo extends ContactInfo { role_in_deal: string }
+interface Analytics { total_deals: number; by_stage: Record<string, number>; funnel: { stage: string; count: number; label: string }[]; top_sectors: { sector: string; count: number }[]; avg_score: number; win_rate: number; total_contacts: number; deals_with_memos: number }
+type View = 'home' | 'pipeline' | 'deal-detail' | 'submit' | 'login' | 'register' | 'analytics' | 'contacts' | 'pricing'
 
 function authHeaders(t: string) { return { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` } }
 
@@ -74,6 +78,19 @@ export default function App() {
     alert('Submission received!'); setView('pipeline')
   }
 
+  async function fetchDealContacts(dealId: string): Promise<DealContactInfo[]> {
+    if (!token) return []
+    const r = await fetch(`${API}/deals/${dealId}/contacts`, { headers: authHeaders(token) })
+    if (r.ok) { const d = await r.json(); return d.contacts || [] }
+    return []
+  }
+
+  async function linkContactToDeal(dealId: string, contactId: string, roleInDeal: string = 'investor') {
+    if (!token) return
+    await fetch(`${API}/deals/${dealId}/contacts`, { method: 'POST', headers: authHeaders(token), body: JSON.stringify({ contact_id: contactId, role_in_deal: roleInDeal }) })
+    openDeal(dealId)
+  }
+
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
       <nav className="border-b border-gray-800 bg-[#0a0a0f]/80 backdrop-blur-sm sticky top-0 z-50">
@@ -83,9 +100,12 @@ export default function App() {
           </button>
           <div className="flex items-center gap-4">
             <button onClick={() => setView('submit')} className="text-sm text-gray-400 hover:text-white transition">Submit a Deal</button>
+            <button onClick={() => setView('pricing')} className="text-sm text-gray-400 hover:text-white transition">Pricing</button>
             {token && user ? (
               <>
                 <button onClick={() => setView('pipeline')} className="text-sm text-gray-400 hover:text-white transition">Pipeline</button>
+                <button onClick={() => setView('contacts')} className="text-sm text-gray-400 hover:text-white transition">Contacts</button>
+                <button onClick={() => setView('analytics')} className="text-sm text-gray-400 hover:text-white transition">Analytics</button>
                 <span className="text-sm text-gray-500">{user.name}</span>
                 <button onClick={logout} className="text-gray-500 hover:text-red-400"><LogOut size={16} /></button>
               </>
@@ -99,8 +119,11 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 py-8">
         {view === 'home' && <HomePage onNavigate={setView} />}
         {view === 'pipeline' && <PipelinePage deals={deals} onOpen={openDeal} />}
-        {view === 'deal-detail' && activeDeal && <DealDetailPage deal={activeDeal} onBack={() => setView('pipeline')} onMove={moveStage} onScore={updateScorecard} onMemo={generateMemo} onNote={addNote} loading={loading} />}
+        {view === 'deal-detail' && activeDeal && <DealDetailPage deal={activeDeal} token={token!} onBack={() => setView('pipeline')} onMove={moveStage} onScore={updateScorecard} onMemo={generateMemo} onNote={addNote} loading={loading} onFetchContacts={fetchDealContacts} onLinkContact={linkContactToDeal} />}
         {view === 'submit' && <SubmitPage onSubmit={submitDeal} />}
+        {view === 'analytics' && token && <AnalyticsPage token={token} />}
+        {view === 'contacts' && token && <ContactsPage token={token} />}
+        {view === 'pricing' && <PricingPage onNavigate={setView} />}
         {view === 'login' && <AuthPage mode="login" onLogin={handleLogin} onSwitch={() => setView('register')} />}
         {view === 'register' && <AuthPage mode="register" onRegister={handleRegister} onSwitch={() => setView('login')} />}
       </main>
@@ -156,16 +179,59 @@ function PipelinePage({ deals, onOpen }: { deals: Deal[]; onOpen: (id: string) =
 
 // ── Deal Detail ──────────────────────────────────────────────────────────
 
-function DealDetailPage({ deal, onBack, onMove, onScore, onMemo, onNote, loading }: {
-  deal: Deal; onBack: () => void; onMove: (id: string, s: string) => void; onScore: (id: string, sc: Record<string, number>) => void
+function DealDetailPage({ deal, token, onBack, onMove, onScore, onMemo, onNote, loading, onFetchContacts, onLinkContact }: {
+  deal: Deal; token: string; onBack: () => void; onMove: (id: string, s: string) => void; onScore: (id: string, sc: Record<string, number>) => void
   onMemo: (id: string) => void; onNote: (id: string, c: string) => void; loading: boolean
+  onFetchContacts: (dealId: string) => Promise<DealContactInfo[]>; onLinkContact: (dealId: string, contactId: string, role: string) => void
 }) {
   const [sc, setSc] = useState(deal.scorecard || { team: 0, market: 0, traction: 0, defensibility: 0, fit: 0 })
   const [note, setNote] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const [dealContacts, setDealContacts] = useState<DealContactInfo[]>([])
+  const [allContacts, setAllContacts] = useState<ContactInfo[]>([])
+  const [showLinkContact, setShowLinkContact] = useState(false)
+
+  useEffect(() => {
+    onFetchContacts(deal.id).then(setDealContacts)
+    fetch(`${API}/contacts`, { headers: authHeaders(token) }).then(r => r.json()).then(d => setAllContacts(d.contacts || []))
+  }, [deal.id])
+
+  function exportMemoPDF() {
+    if (!deal.memo) return
+    setExporting(true)
+    try {
+      const pdf = new jsPDF({ unit: 'pt', format: 'a4' })
+      pdf.setFillColor(18, 18, 26); pdf.rect(0, 0, 595, 842, 'F')
+      pdf.setTextColor(139, 92, 246); pdf.setFontSize(22)
+      pdf.text(`Investment Memo: ${deal.company_name}`, 40, 50)
+      pdf.setTextColor(156, 163, 175); pdf.setFontSize(10)
+      pdf.text(`${deal.sector} | ${deal.raise_amount} | Score: ${deal.score_avg || 'N/A'} | Stage: ${STAGE_LABELS[deal.stage]}`, 40, 72)
+      pdf.setTextColor(209, 213, 219); pdf.setFontSize(11)
+      const lines = pdf.splitTextToSize(deal.memo, 515)
+      pdf.text(lines, 40, 100)
+      if (dealContacts.length > 0) {
+        const contactY = Math.min(100 + lines.length * 14 + 30, 750)
+        pdf.setTextColor(139, 92, 246); pdf.setFontSize(14)
+        pdf.text('Key Contacts', 40, contactY)
+        pdf.setTextColor(209, 213, 219); pdf.setFontSize(10)
+        dealContacts.forEach((c, i) => {
+          pdf.text(`${c.name} — ${c.firm || 'N/A'} (${c.role_in_deal}) ${c.email || ''}`, 40, contactY + 20 + i * 16)
+        })
+      }
+      pdf.save(`memo-${deal.company_name.toLowerCase().replace(/\s+/g, '-')}.pdf`)
+    } finally { setExporting(false) }
+  }
 
   return (
     <div className="space-y-6">
-      <button onClick={onBack} className="text-sm text-gray-400 hover:text-white transition flex items-center gap-1"><ArrowLeft size={16} /> Pipeline</button>
+      <div className="flex items-center justify-between">
+        <button onClick={onBack} className="text-sm text-gray-400 hover:text-white transition flex items-center gap-1"><ArrowLeft size={16} /> Pipeline</button>
+        {deal.memo && (
+          <button onClick={exportMemoPDF} disabled={exporting} className="text-xs px-3 py-1.5 rounded-lg bg-green-600/20 border border-green-500/30 text-green-400 hover:bg-green-600/30 transition flex items-center gap-1 disabled:opacity-50">
+            {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} Export Memo PDF
+          </button>
+        )}
+      </div>
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">{deal.company_name}</h1>
@@ -211,6 +277,41 @@ function DealDetailPage({ deal, onBack, onMove, onScore, onMemo, onNote, loading
               </button>
             </div>
             {deal.memo ? <div className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{deal.memo}</div> : <p className="text-sm text-gray-500">No memo yet. Click generate to create one.</p>}
+          </div>
+
+          {/* Contacts linked to deal */}
+          <div className="bg-[#12121a] border border-gray-800 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Users size={14} /> Contacts</h2>
+              <button onClick={() => setShowLinkContact(!showLinkContact)} className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1"><UserPlus size={12} /> Link Contact</button>
+            </div>
+            {showLinkContact && (
+              <div className="mb-3 space-y-1 max-h-32 overflow-y-auto">
+                {allContacts.filter(c => !dealContacts.some(dc => dc.id === c.id)).map(c => (
+                  <button key={c.id} onClick={() => { onLinkContact(deal.id, c.id, 'investor'); setShowLinkContact(false) }}
+                    className="w-full text-left text-xs px-2 py-1.5 bg-[#0a0a0f] rounded hover:bg-violet-600/10 text-gray-300 flex items-center gap-2">
+                    <Link size={10} className="text-violet-400" /> {c.name} {c.firm && `(${c.firm})`}
+                  </button>
+                ))}
+                {allContacts.filter(c => !dealContacts.some(dc => dc.id === c.id)).length === 0 && <p className="text-xs text-gray-600">No unlinked contacts</p>}
+              </div>
+            )}
+            {dealContacts.length > 0 ? (
+              <div className="space-y-2">
+                {dealContacts.map(c => (
+                  <div key={c.id} className="flex items-center justify-between bg-[#0a0a0f] rounded-lg p-2">
+                    <div>
+                      <span className="text-sm text-white">{c.name}</span>
+                      {c.firm && <span className="text-xs text-gray-500 ml-2">{c.firm}</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs px-2 py-0.5 bg-violet-600/20 text-violet-400 rounded">{c.role_in_deal}</span>
+                      {c.email && <span className="text-xs text-gray-500">{c.email}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-sm text-gray-500">No contacts linked yet</p>}
           </div>
 
           {/* Notes */}
@@ -277,13 +378,286 @@ function SubmitPage({ onSubmit }: { onSubmit: (d: Record<string, string>) => voi
   )
 }
 
+// ── Analytics ────────────────────────────────────────────────────────────
+
+function AnalyticsPage({ token }: { token: string }) {
+  const [data, setData] = useState<Analytics | null>(null)
+  useEffect(() => {
+    fetch(`${API}/analytics`, { headers: authHeaders(token) }).then(r => r.json()).then(setData)
+  }, [])
+
+  if (!data) return <div className="text-center py-16 text-gray-500">Loading analytics...</div>
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-white flex items-center gap-2"><BarChart3 size={22} className="text-violet-400" /> Analytics</h1>
+
+      {/* KPI cards */}
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          { label: 'Total Deals', value: data.total_deals, color: 'text-violet-400' },
+          { label: 'Win Rate', value: `${data.win_rate}%`, color: 'text-green-400' },
+          { label: 'Avg Score', value: data.avg_score || 'N/A', color: 'text-amber-400' },
+          { label: 'Contacts', value: data.total_contacts, color: 'text-blue-400' },
+        ].map(k => (
+          <div key={k.label} className="bg-[#12121a] border border-gray-800 rounded-xl p-5 text-center">
+            <div className={`text-3xl font-bold ${k.color}`}>{k.value}</div>
+            <div className="text-xs text-gray-500 mt-1">{k.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Pipeline funnel */}
+        <div className="bg-[#12121a] border border-gray-800 rounded-xl p-5">
+          <h2 className="text-sm font-semibold text-white mb-4">Pipeline Funnel</h2>
+          <div className="space-y-2">
+            {data.funnel.map((f, i) => {
+              const maxCount = Math.max(...data.funnel.map(x => x.count), 1)
+              const width = Math.max((f.count / maxCount) * 100, 8)
+              return (
+                <div key={f.stage} className="flex items-center gap-3">
+                  <div className="w-20 text-xs text-gray-400 text-right">{f.label}</div>
+                  <div className="flex-1 h-7 bg-[#0a0a0f] rounded overflow-hidden">
+                    <div className="h-full rounded flex items-center px-2" style={{ width: `${width}%`, backgroundColor: ['#8b5cf6', '#6366f1', '#a78bfa', '#c084fc', '#22c55e'][i] || '#8b5cf6' }}>
+                      <span className="text-xs text-white font-medium">{f.count}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Stage breakdown */}
+        <div className="bg-[#12121a] border border-gray-800 rounded-xl p-5">
+          <h2 className="text-sm font-semibold text-white mb-4">By Stage</h2>
+          <div className="space-y-2">
+            {Object.entries(data.by_stage).map(([stage, count]) => (
+              <div key={stage} className="flex items-center justify-between">
+                <span className="text-sm text-gray-300">{STAGE_LABELS[stage] || stage}</span>
+                <span className="text-sm font-medium text-white">{count}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 pt-3 border-t border-gray-800 flex justify-between">
+            <span className="text-xs text-gray-500">Deals with memos</span>
+            <span className="text-xs text-violet-400">{data.deals_with_memos}</span>
+          </div>
+        </div>
+
+        {/* Top sectors */}
+        <div className="bg-[#12121a] border border-gray-800 rounded-xl p-5 md:col-span-2">
+          <h2 className="text-sm font-semibold text-white mb-4">Top Sectors</h2>
+          <div className="flex flex-wrap gap-2">
+            {data.top_sectors.map(s => (
+              <div key={s.sector} className="px-3 py-2 bg-violet-600/10 border border-violet-500/20 rounded-lg">
+                <span className="text-sm text-white">{s.sector}</span>
+                <span className="text-xs text-violet-400 ml-2">{s.count} deals</span>
+              </div>
+            ))}
+            {data.top_sectors.length === 0 && <p className="text-sm text-gray-500">No sector data yet</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Contacts ────────────────────────────────────────────────────────────
+
+function ContactsPage({ token }: { token: string }) {
+  const [contacts, setContacts] = useState<ContactInfo[]>([])
+  const [search, setSearch] = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ name: '', firm: '', role: '', email: '', phone: '', notes: '' })
+
+  useEffect(() => { loadContacts() }, [search])
+
+  function loadContacts() {
+    const params = search ? `?q=${encodeURIComponent(search)}` : ''
+    fetch(`${API}/contacts${params}`, { headers: authHeaders(token) }).then(r => r.json()).then(d => setContacts(d.contacts || []))
+  }
+
+  async function createContact() {
+    if (!form.name) return
+    await fetch(`${API}/contacts`, { method: 'POST', headers: authHeaders(token), body: JSON.stringify(form) })
+    setForm({ name: '', firm: '', role: '', email: '', phone: '', notes: '' })
+    setShowForm(false)
+    loadContacts()
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-white flex items-center gap-2"><Users size={22} className="text-violet-400" /> Contacts</h1>
+        <button onClick={() => setShowForm(!showForm)} className="text-sm bg-violet-600 hover:bg-violet-500 px-3 py-1.5 rounded-lg text-white transition flex items-center gap-1">
+          <Plus size={14} /> Add Contact
+        </button>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search size={16} className="absolute left-3 top-2.5 text-gray-500" />
+        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search contacts..."
+          className="w-full pl-9 pr-3 py-2 bg-[#12121a] border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-violet-500" />
+      </div>
+
+      {/* Create form */}
+      {showForm && (
+        <div className="bg-[#12121a] border border-gray-800 rounded-xl p-5 space-y-3">
+          <h2 className="text-sm font-semibold text-white">New Contact</h2>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { key: 'name', ph: 'Name *' }, { key: 'firm', ph: 'Firm' }, { key: 'role', ph: 'Role (e.g. Partner)' },
+              { key: 'email', ph: 'Email' }, { key: 'phone', ph: 'Phone' },
+            ].map(f => (
+              <input key={f.key} type="text" value={(form as Record<string, string>)[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+                placeholder={f.ph} className="px-3 py-2 bg-[#0a0a0f] border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-violet-500" />
+            ))}
+          </div>
+          <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Notes..."
+            className="w-full px-3 py-2 bg-[#0a0a0f] border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-violet-500 resize-y" rows={2} />
+          <button onClick={createContact} className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm transition">Save Contact</button>
+        </div>
+      )}
+
+      {/* Contact list */}
+      {contacts.length === 0 ? (
+        <div className="text-center py-16"><Users size={48} className="text-gray-600 mx-auto mb-4" /><p className="text-gray-400">No contacts yet</p></div>
+      ) : (
+        <div className="space-y-2">
+          {contacts.map(c => (
+            <div key={c.id} className="bg-[#12121a] border border-gray-800 rounded-lg p-4 flex items-center justify-between hover:border-violet-500/30 transition">
+              <div>
+                <div className="text-sm font-medium text-white">{c.name}</div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {c.firm && <span>{c.firm}</span>}
+                  {c.role && <span className="ml-2">({c.role})</span>}
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-gray-500">
+                {c.email && <span>{c.email}</span>}
+                {c.phone && <span>{c.phone}</span>}
+                {c.tags?.length > 0 && c.tags.map(t => <span key={t} className="px-2 py-0.5 bg-violet-600/10 text-violet-400 rounded">{t}</span>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Pricing ──────────────────────────────────────────────────────────────
+
+function PricingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
+  const plans = [
+    {
+      name: 'Starter',
+      price: 'Free',
+      period: '',
+      desc: 'For angels tracking a few deals',
+      features: ['Up to 10 active deals', 'Kanban pipeline', '5-dimension scorecards', 'AI investment memos', 'Activity timeline', 'Public submission form'],
+      cta: 'Get Started',
+      action: () => onNavigate('pipeline'),
+      color: 'gray',
+      popular: false,
+    },
+    {
+      name: 'Pro',
+      price: '$39',
+      period: '/mo',
+      desc: 'For active investors and small funds',
+      features: ['Unlimited deals', 'Investor contact management', 'Analytics dashboard', 'Conversion funnel tracking', 'PDF memo export', 'Deal-contact linking', 'Priority AI generation', 'PitchDeckForge integration'],
+      cta: 'Coming Soon',
+      action: () => {},
+      color: 'violet',
+      popular: true,
+    },
+    {
+      name: 'Fund',
+      price: '$99',
+      period: '/mo',
+      desc: 'For VC funds and syndicates',
+      features: ['Everything in Pro', 'Up to 10 team members', 'Shared pipeline & scorecards', 'LP reporting exports', 'Custom submission branding', 'API access', 'Bulk import/export', 'Dedicated support'],
+      cta: 'Coming Soon',
+      action: () => {},
+      color: 'purple',
+      popular: false,
+    },
+  ]
+
+  return (
+    <div className="space-y-12 py-8">
+      <div className="text-center space-y-4">
+        <h1 className="text-4xl font-bold text-white">Simple Deal Tracking</h1>
+        <p className="text-lg text-gray-400 max-w-xl mx-auto">From angel checks to fund operations — scale your deal flow.</p>
+      </div>
+
+      <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
+        {plans.map(plan => (
+          <div key={plan.name} className={`relative bg-[#12121a] rounded-xl p-6 flex flex-col ${
+            plan.popular ? 'border-2 border-violet-500 ring-1 ring-violet-500/20' : 'border border-gray-800'
+          }`}>
+            {plan.popular && (
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-violet-600 text-white text-xs px-3 py-1 rounded-full flex items-center gap-1">
+                <Star size={10} /> Most Popular
+              </div>
+            )}
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                {plan.color === 'gray' && <Zap size={16} className="text-gray-400" />}
+                {plan.color === 'violet' && <CreditCard size={16} className="text-violet-400" />}
+                {plan.color === 'purple' && <Building size={16} className="text-purple-400" />}
+                {plan.name}
+              </h3>
+              <div className="mt-2">
+                <span className="text-3xl font-bold text-white">{plan.price}</span>
+                {plan.period && <span className="text-gray-500 text-sm">{plan.period}</span>}
+              </div>
+              <p className="text-sm text-gray-400 mt-2">{plan.desc}</p>
+            </div>
+
+            <ul className="space-y-2 mb-6 flex-1">
+              {plan.features.map(f => (
+                <li key={f} className="text-sm text-gray-300 flex items-start gap-2">
+                  <Check size={14} className={`mt-0.5 shrink-0 ${
+                    plan.color === 'violet' ? 'text-violet-400' : plan.color === 'purple' ? 'text-purple-400' : 'text-gray-500'
+                  }`} />
+                  {f}
+                </li>
+              ))}
+            </ul>
+
+            <button onClick={plan.action}
+              className={`w-full py-2.5 rounded-lg font-medium transition text-sm ${
+                plan.name === 'Starter'
+                  ? 'bg-gray-800 hover:bg-gray-700 text-white'
+                  : plan.popular
+                    ? 'bg-violet-600 hover:bg-violet-500 text-white cursor-not-allowed opacity-75'
+                    : 'bg-purple-600/20 border border-purple-500/30 text-purple-400 cursor-not-allowed opacity-75'
+              }`}>
+              {plan.cta}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="text-center text-sm text-gray-500">
+        Payment integration coming soon. All features available during beta.
+      </div>
+    </div>
+  )
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────
 
 function AuthPage({ mode, onLogin, onRegister, onSwitch }: {
   mode: 'login' | 'register'; onLogin?: (e: string, p: string) => Promise<void>; onRegister?: (e: string, p: string, n: string) => Promise<void>; onSwitch: () => void
 }) {
-  const [email, setEmail] = useState(mode === 'login' ? 'demo@dealflow.dev' : '')
-  const [password, setPassword] = useState(mode === 'login' ? 'demo123' : '')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [name, setName] = useState(''); const [error, setError] = useState(''); const [ld, setLd] = useState(false)
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setError(''); setLd(true)
@@ -299,7 +673,7 @@ function AuthPage({ mode, onLogin, onRegister, onSwitch }: {
           <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full px-3 py-2 bg-[#0a0a0f] border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:border-violet-500" />
           <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full px-3 py-2 bg-[#0a0a0f] border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:border-violet-500" />
           {error && <p className="text-sm text-red-400">{error}</p>}
-          {mode === 'login' && <p className="text-xs text-gray-500">Demo: demo@dealflow.dev / demo123</p>}
+          {/* Demo hint removed for production */}
           <button type="submit" disabled={ld} className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 text-white rounded-lg font-medium transition disabled:opacity-50">{ld ? '...' : mode === 'login' ? 'Sign In' : 'Create Account'}</button>
         </form>
         <p className="text-sm text-gray-500 text-center mt-4">{mode === 'login' ? "No account? " : 'Have one? '}<button onClick={onSwitch} className="text-violet-400 hover:text-violet-300">{mode === 'login' ? 'Sign Up' : 'Sign In'}</button></p>

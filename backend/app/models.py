@@ -66,6 +66,36 @@ class Activity(Base):
     created_at = Column(DateTime, default=utcnow)
     deal = relationship("Deal", back_populates="activities")
 
+class AnalyticsEvent(Base):
+    __tablename__ = "analytics_events"
+    id = Column(String, primary_key=True, default=gen_uuid)
+    event_type = Column(String, nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    resource_id = Column(String, nullable=True)
+    metadata_ = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime, default=utcnow)
+
+class Contact(Base):
+    __tablename__ = "contacts"
+    id = Column(String, primary_key=True, default=gen_uuid)
+    name = Column(String, nullable=False)
+    firm = Column(String, nullable=True)
+    role = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    tags = Column(JSON, default=list)  # ["lead_investor", "angel", "strategic"]
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+class DealContact(Base):
+    __tablename__ = "deal_contacts"
+    id = Column(String, primary_key=True, default=gen_uuid)
+    deal_id = Column(String, ForeignKey("deals.id"), nullable=False)
+    contact_id = Column(String, ForeignKey("contacts.id"), nullable=False)
+    role_in_deal = Column(String, default="investor")  # investor, advisor, introducer
+    created_at = Column(DateTime, default=utcnow)
+
 def get_engine(url="sqlite:///./dealflow.db"): return create_engine(url, echo=False)
 def init_db(url="sqlite:///./dealflow.db"):
     e = get_engine(url); Base.metadata.create_all(e); return e

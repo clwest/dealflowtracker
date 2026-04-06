@@ -1,5 +1,7 @@
 """DealFlowTracker — FastAPI Backend"""
 import os, json
+from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Depends
@@ -7,13 +9,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker, joinedload
 from openai import OpenAI
-from app.models import User, Submission, Deal, Activity, DealStage, init_db, get_engine, utcnow
+from app.models import User, Submission, Deal, Activity, Contact, DealContact, AnalyticsEvent, DealStage, init_db, get_engine, utcnow
 from app.auth import hash_password, verify_password, create_token, decode_token
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+AI_MODEL = os.getenv("AI_MODEL", "gpt-5-mini")
+def get_openai_client():
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
 app = FastAPI(title="DealFlowTracker", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5178", "http://localhost:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-DATABASE_URL = "sqlite:///./dealflow.db"
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5178,http://localhost:3000").split(",")
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dealflow.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 engine = get_engine(DATABASE_URL); init_db(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
@@ -26,9 +33,47 @@ class SubmissionCreate(BaseModel):
 class StageUpdate(BaseModel): stage: str
 class ScorecardUpdate(BaseModel): team: int = 0; market: int = 0; traction: int = 0; defensibility: int = 0; fit: int = 0
 class NoteCreate(BaseModel): content: str
+class ContactCreate(BaseModel):
+    name: str; firm: str = ""; role: str = ""; email: str = ""; phone: str = ""
+    tags: list[str] = []; notes: str = ""
+class ContactUpdate(BaseModel):
+    name: Optional[str] = None; firm: Optional[str] = None; role: Optional[str] = None
+    email: Optional[str] = None; phone: Optional[str] = None
+    tags: Optional[list[str]] = None; notes: Optional[str] = None
+class LinkContact(BaseModel): contact_id: str; role_in_deal: str = "investor"
 
 @app.get("/api/health")
 def health(): return {"status": "healthy", "service": "DealFlowTracker"}
+
+def _track(event_type: str, user_id: str = None, resource_id: str = None, metadata: dict = None):
+    db = SessionLocal()
+    try:
+        evt = AnalyticsEvent(event_type=event_type, user_id=user_id, resource_id=resource_id, metadata_=metadata or {})
+        db.add(evt); db.commit()
+    except Exception:
+        pass
+    finally:
+        db.close()
+
+@app.get("/api/events")
+def list_events(event_type: Optional[str] = None, limit: int = 100, p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        q = db.query(AnalyticsEvent).order_by(AnalyticsEvent.created_at.desc())
+        if event_type: q = q.filter(AnalyticsEvent.event_type == event_type)
+        events = q.limit(limit).all()
+        return {"events": [{"id": e.id, "event_type": e.event_type, "user_id": e.user_id, "resource_id": e.resource_id, "metadata": e.metadata_, "created_at": e.created_at.isoformat()} for e in events]}
+    finally: db.close()
+
+@app.get("/api/events/summary")
+def events_summary(p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        from collections import Counter
+        events = db.query(AnalyticsEvent.event_type).all()
+        counts = Counter(e[0] for e in events)
+        return {"total_events": sum(counts.values()), "by_type": dict(counts)}
+    finally: db.close()
 
 @app.post("/api/auth/register")
 def register(req: RegisterReq):
@@ -70,6 +115,7 @@ def create_submission(data: SubmissionCreate):
         db.add(deal); db.flush()
         act = Activity(deal_id=deal.id, action_type="submitted", content=f"{data.company_name} submitted")
         db.add(act); db.commit()
+        _track("deal_submitted", resource_id=deal.id, metadata={"company": data.company_name, "sector": data.sector})
         return {"submission_id": sub.id, "deal_id": deal.id, "status": "received"}
     finally: db.close()
 
@@ -107,6 +153,7 @@ def update_stage(deal_id: str, data: StageUpdate, p: dict = Depends(decode_token
         deal.last_activity_at = utcnow()
         act = Activity(deal_id=deal.id, user_id=p["sub"], action_type="stage_change", content=f"Moved from {old} → {data.stage}")
         db.add(act); db.commit()
+        _track("stage_changed", p["sub"], deal_id, {"from": old, "to": data.stage})
         return {"status": "updated", "stage": data.stage}
     finally: db.close()
 
@@ -123,6 +170,7 @@ def update_scorecard(deal_id: str, data: ScorecardUpdate, p: dict = Depends(deco
         deal.last_activity_at = utcnow()
         act = Activity(deal_id=deal.id, user_id=p["sub"], action_type="scored", content=f"Scorecard updated: avg {deal.score_avg}")
         db.add(act); db.commit()
+        _track("scorecard_saved", p["sub"], deal_id, {"score_avg": deal.score_avg})
         return {"scorecard": sc, "score_avg": deal.score_avg}
     finally: db.close()
 
@@ -151,8 +199,143 @@ def generate_memo(deal_id: str, p: dict = Depends(decode_token)):
         deal.last_activity_at = utcnow()
         act = Activity(deal_id=deal.id, user_id=p["sub"], action_type="memo_generated", content="Investment memo generated")
         db.add(act); db.commit()
+        _track("memo_generated", p["sub"], deal_id, {"company": sub.company_name})
         return {"memo": memo}
     finally: db.close()
+
+# ── Contacts ─────────────────────────────────────────────────────────────
+
+@app.post("/api/contacts")
+def create_contact(data: ContactCreate, p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        c = Contact(name=data.name, firm=data.firm, role=data.role, email=data.email,
+                    phone=data.phone, tags=data.tags, notes=data.notes, created_by=p["sub"])
+        db.add(c); db.commit(); db.refresh(c)
+        return _contact_dict(c)
+    finally: db.close()
+
+@app.get("/api/contacts")
+def list_contacts(q: Optional[str] = None, p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        query = db.query(Contact).order_by(Contact.created_at.desc())
+        if q:
+            query = query.filter(
+                Contact.name.ilike(f"%{q}%") | Contact.firm.ilike(f"%{q}%") | Contact.email.ilike(f"%{q}%")
+            )
+        return {"contacts": [_contact_dict(c) for c in query.limit(100).all()]}
+    finally: db.close()
+
+@app.get("/api/contacts/{contact_id}")
+def get_contact(contact_id: str, p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        c = db.query(Contact).filter(Contact.id == contact_id).first()
+        if not c: raise HTTPException(404)
+        # Get linked deals
+        links = db.query(DealContact).filter(DealContact.contact_id == contact_id).all()
+        deal_ids = [l.deal_id for l in links]
+        deals = db.query(Deal).options(joinedload(Deal.submission)).filter(Deal.id.in_(deal_ids)).all() if deal_ids else []
+        result = _contact_dict(c)
+        result["deals"] = [{"id": d.id, "company_name": d.submission.company_name if d.submission else "Unknown", "stage": d.stage.value if d.stage else "new"} for d in deals]
+        return result
+    finally: db.close()
+
+@app.patch("/api/contacts/{contact_id}")
+def update_contact(contact_id: str, data: ContactUpdate, p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        c = db.query(Contact).filter(Contact.id == contact_id).first()
+        if not c: raise HTTPException(404)
+        for field, val in data.model_dump(exclude_none=True).items():
+            setattr(c, field, val)
+        db.commit()
+        return _contact_dict(c)
+    finally: db.close()
+
+@app.post("/api/deals/{deal_id}/contacts")
+def link_contact_to_deal(deal_id: str, data: LinkContact, p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        deal = db.query(Deal).filter(Deal.id == deal_id).first()
+        if not deal: raise HTTPException(404)
+        contact = db.query(Contact).filter(Contact.id == data.contact_id).first()
+        if not contact: raise HTTPException(404, "Contact not found")
+        existing = db.query(DealContact).filter(DealContact.deal_id == deal_id, DealContact.contact_id == data.contact_id).first()
+        if existing: return {"status": "already_linked"}
+        link = DealContact(deal_id=deal_id, contact_id=data.contact_id, role_in_deal=data.role_in_deal)
+        db.add(link); db.commit()
+        act = Activity(deal_id=deal_id, user_id=p["sub"], action_type="contact_linked",
+                      content=f"Linked {contact.name} ({contact.firm or 'No firm'}) as {data.role_in_deal}")
+        db.add(act); db.commit()
+        return {"status": "linked"}
+    finally: db.close()
+
+@app.get("/api/deals/{deal_id}/contacts")
+def get_deal_contacts(deal_id: str, p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        links = db.query(DealContact).filter(DealContact.deal_id == deal_id).all()
+        contact_ids = [l.contact_id for l in links]
+        contacts = db.query(Contact).filter(Contact.id.in_(contact_ids)).all() if contact_ids else []
+        role_map = {l.contact_id: l.role_in_deal for l in links}
+        return {"contacts": [{**_contact_dict(c), "role_in_deal": role_map.get(c.id, "investor")} for c in contacts]}
+    finally: db.close()
+
+# ── Analytics ────────────────────────────────────────────────────────────
+
+@app.get("/api/analytics")
+def get_analytics(p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        total = db.query(Deal).count()
+        by_stage = {}
+        for s in DealStage:
+            c = db.query(Deal).filter(Deal.stage == s).count()
+            by_stage[s.value] = c
+
+        # Conversion funnel
+        funnel_stages = ["new", "review", "diligence", "term_sheet", "closed_won"]
+        funnel = []
+        for stage in funnel_stages:
+            count = sum(by_stage.get(s, 0) for s in funnel_stages[funnel_stages.index(stage):])
+            count += by_stage.get("closed_lost", 0) if stage == "new" else 0
+            funnel.append({"stage": stage, "count": count, "label": STAGE_LABELS_MAP.get(stage, stage)})
+
+        # Top sectors
+        deals = db.query(Deal).options(joinedload(Deal.submission)).all()
+        sector_counts: dict[str, int] = {}
+        total_score = 0.0
+        scored_count = 0
+        for d in deals:
+            if d.submission and d.submission.sector:
+                s = d.submission.sector
+                sector_counts[s] = sector_counts.get(s, 0) + 1
+            if d.score_avg and d.score_avg > 0:
+                total_score += d.score_avg
+                scored_count += 1
+
+        top_sectors = sorted(sector_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+        avg_score = round(total_score / scored_count, 1) if scored_count else 0
+
+        won = by_stage.get("closed_won", 0)
+        lost = by_stage.get("closed_lost", 0)
+        win_rate = round(won / (won + lost) * 100) if (won + lost) > 0 else 0
+
+        return {
+            "total_deals": total,
+            "by_stage": by_stage,
+            "funnel": funnel,
+            "top_sectors": [{"sector": s, "count": c} for s, c in top_sectors],
+            "avg_score": avg_score,
+            "win_rate": win_rate,
+            "total_contacts": db.query(Contact).count(),
+            "deals_with_memos": db.query(Deal).filter(Deal.memo.isnot(None)).count(),
+        }
+    finally: db.close()
+
+STAGE_LABELS_MAP = {"new": "New", "review": "Review", "diligence": "Diligence", "term_sheet": "Term Sheet", "closed_won": "Won", "closed_lost": "Lost"}
 
 # ── Stats ─────────────────────────────────────────────────────────────────
 
@@ -182,7 +365,7 @@ Scorecard: {json.dumps(deal.scorecard or {})}
 
 Structure: Summary, Thesis, Key Risks, Recommendation. Be concise and analytical."""
 
-    if not client.api_key:
+    if not os.getenv("OPENAI_API_KEY"):
         return f"""# Investment Memo: {sub.company_name}
 
 ## Summary
@@ -200,10 +383,15 @@ Structure: Summary, Thesis, Key Risks, Recommendation. Be concise and analytical
 [Dev Mode] Set OPENAI_API_KEY for AI-generated analysis. Current scorecard: {json.dumps(deal.scorecard or {})}"""
 
     try:
-        r = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=1500)
+        r = get_openai_client().chat.completions.create(model=AI_MODEL, messages=[{"role": "user", "content": prompt}], max_completion_tokens=1500)
         return r.choices[0].message.content or "Failed to generate memo"
     except Exception:
         return f"# Memo generation failed for {sub.company_name}"
+
+def _contact_dict(c: Contact) -> dict:
+    return {"id": c.id, "name": c.name, "firm": c.firm, "role": c.role, "email": c.email,
+            "phone": c.phone, "tags": c.tags or [], "notes": c.notes,
+            "created_at": c.created_at.isoformat() if c.created_at else None}
 
 def _deal_dict(d: Deal) -> dict:
     sub = d.submission
