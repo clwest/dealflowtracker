@@ -98,4 +98,13 @@ class DealContact(Base):
 
 def get_engine(url="sqlite:///./dealflow.db"): return create_engine(url, echo=False)
 def init_db(url="sqlite:///./dealflow.db"):
-    e = get_engine(url); Base.metadata.create_all(e); return e
+    e = get_engine(url); Base.metadata.create_all(e)
+    # Add missing columns if table was created by another app (shared DB)
+    from sqlalchemy import inspect as sa_inspect, text
+    inspector = sa_inspect(e)
+    if inspector.has_table("users"):
+        existing = {c["name"] for c in inspector.get_columns("users")}
+        with e.begin() as conn:
+            if "role" not in existing:
+                conn.execute(text("ALTER TABLE users ADD COLUMN role VARCHAR DEFAULT 'investor'"))
+    return e
