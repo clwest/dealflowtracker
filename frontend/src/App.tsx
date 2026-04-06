@@ -570,7 +570,8 @@ function PricingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
       period: '/mo',
       desc: 'For active investors and small funds',
       features: ['Unlimited deals', 'Investor contact management', 'Analytics dashboard', 'Conversion funnel tracking', 'PDF memo export', 'Deal-contact linking', 'Priority AI generation', 'PitchDeckForge integration'],
-      cta: 'Coming Soon',
+      cta: 'Subscribe — $39/mo',
+      plan: 'pro_monthly',
       action: () => {},
       color: 'violet',
       popular: true,
@@ -581,7 +582,8 @@ function PricingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
       period: '/mo',
       desc: 'For VC funds and syndicates',
       features: ['Everything in Pro', 'Up to 10 team members', 'Shared pipeline & scorecards', 'LP reporting exports', 'Custom submission branding', 'API access', 'Bulk import/export', 'Dedicated support'],
-      cta: 'Coming Soon',
+      cta: 'Subscribe — $99/mo',
+      plan: 'team_monthly',
       action: () => {},
       color: 'purple',
       popular: false,
@@ -630,13 +632,27 @@ function PricingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
               ))}
             </ul>
 
-            <button onClick={plan.action}
+            <button onClick={async () => {
+                if (plan.name === 'Starter') { plan.action(); return }
+                const token = localStorage.getItem('df_token')
+                if (!token) { onNavigate('login'); return }
+                try {
+                  const r = await fetch(`${API.replace('/api', '')}/api/stripe/checkout`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ plan: (plan as any).plan }),
+                  })
+                  const data = await r.json()
+                  if (data.url) window.location.href = data.url
+                  else alert(data.detail || 'Failed to start checkout')
+                } catch { alert('Checkout unavailable — please try again') }
+              }}
               className={`w-full py-2.5 rounded-lg font-medium transition text-sm ${
                 plan.name === 'Starter'
                   ? 'bg-gray-800 hover:bg-gray-700 text-white'
                   : plan.popular
-                    ? 'bg-violet-600 hover:bg-violet-500 text-white cursor-not-allowed opacity-75'
-                    : 'bg-purple-600/20 border border-purple-500/30 text-purple-400 cursor-not-allowed opacity-75'
+                    ? 'bg-violet-600 hover:bg-violet-500 text-white'
+                    : 'bg-purple-600 hover:bg-purple-500 text-white'
               }`}>
               {plan.cta}
             </button>
