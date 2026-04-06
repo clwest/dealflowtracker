@@ -1,9 +1,9 @@
-import hashlib, hmac
+import os, hashlib, hmac
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from fastapi import HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-SECRET_KEY = "dealflow-dev-secret"
+SECRET_KEY = os.getenv("SECRET_KEY", "founder-toolkit-shared-secret-2026")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 def hash_password(p): return hashlib.sha256((p + SECRET_KEY).encode()).hexdigest()
