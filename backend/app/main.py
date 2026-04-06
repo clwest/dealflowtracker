@@ -16,6 +16,10 @@ AI_MODEL = os.getenv("AI_MODEL", "gpt-5-mini")
 def get_openai_client():
     return OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
 app = FastAPI(title="DealFlowTracker", version="1.0.0")
+
+from app.stripe_billing import router as stripe_router
+app.include_router(stripe_router)
+
 _origins_env = os.getenv("ALLOWED_ORIGINS", "")
 ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()] if _origins_env else ["*"]
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
