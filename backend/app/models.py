@@ -96,6 +96,27 @@ class DealContact(Base):
     role_in_deal = Column(String, default="investor")  # investor, advisor, introducer
     created_at = Column(DateTime, default=utcnow)
 
+# ── Founder Toolkit: Shared Project (cross-app data flow) ─────────────────
+
+class FounderProject(Base):
+    __tablename__ = "founder_projects"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    title = Column(String, nullable=False)
+    stage = Column(String, default="started")  # started, mentor_done, deck_created, deal_opened, contract_drafted
+    mentor_session_id = Column(String, nullable=True)
+    mentor_notes = Column(JSON, nullable=True)  # {summary, next_steps, key_feedback, mentor_name}
+    deck_id = Column(String, nullable=True)
+    deck_summary = Column(JSON, nullable=True)  # {tl_dr, slide_count, template, title}
+    deal_id = Column(String, nullable=True)
+    deal_data = Column(JSON, nullable=True)  # {company_name, raise_amount, sector, score_avg}
+    contract_id = Column(String, nullable=True)
+    contract_data = Column(JSON, nullable=True)  # {title, status, template_name}
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 def get_engine(url="sqlite:///./dealflow.db"): return create_engine(url, echo=False)
 def init_db(url="sqlite:///./dealflow.db"):
     e = get_engine(url); Base.metadata.create_all(e)
