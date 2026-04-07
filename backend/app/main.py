@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker, joinedload
 from openai import OpenAI
-from app.models import User, Submission, Deal, Activity, Contact, DealContact, AnalyticsEvent, DealStage, init_db, get_engine, utcnow
+from app.models import User, Submission, Deal, Activity, Contact, DealContact, AnalyticsEvent, FounderProject, DealStage, init_db, get_engine, utcnow
 from app.auth import hash_password, verify_password, create_token, decode_token
 
 AI_MODEL = os.getenv("AI_MODEL", "gpt-5-mini")
@@ -346,6 +346,89 @@ def get_analytics(p: dict = Depends(decode_token)):
     finally: db.close()
 
 STAGE_LABELS_MAP = {"new": "New", "review": "Review", "diligence": "Diligence", "term_sheet": "Term Sheet", "closed_won": "Won", "closed_lost": "Lost"}
+
+# ── Founder Project (cross-app data flow) ────────────────────────────────
+
+@app.get("/api/founder-projects")
+def list_founder_projects(p: dict = Depends(decode_token)):
+    db = SessionLocal()
+    try:
+        projects = db.query(FounderProject).filter(FounderProject.user_id == p["sub"]).order_by(FounderProject.updated_at.desc()).all()
+        return {"projects": [_founder_project_dict(fp) for fp in projects]}
+    finally: db.close()
+
+
+class ImportFromProjectReq(BaseModel):
+    project_id: str
+
+
+@app.post("/api/founder-projects/import")
+def import_from_founder_project(data: ImportFromProjectReq, p: dict = Depends(decode_token)):
+    """Import from a Founder Project to create a submission + deal."""
+    db = SessionLocal()
+    try:
+        fp = db.query(FounderProject).filter(
+            FounderProject.id == data.project_id, FounderProject.user_id == p["sub"]
+        ).first()
+        if not fp:
+            raise HTTPException(404, "Founder Project not found")
+
+        notes = fp.mentor_notes or {}
+        deck = fp.deck_summary or {}
+
+        # Create submission from project data
+        sub = Submission(
+            company_name=fp.title,
+            one_liner=notes.get("summary", "")[:200],
+            deck_url="",
+            sector="",
+            raise_amount=deck.get("raise_amount", ""),
+            traction=notes.get("key_feedback", ""),
+            founder_name="",
+            founder_email=p.get("email", ""),
+        )
+        db.add(sub); db.flush()
+
+        deal = Deal(submission_id=sub.id, owner_id=p["sub"])
+        db.add(deal); db.flush()
+
+        act = Activity(deal_id=deal.id, user_id=p["sub"], action_type="imported",
+                      content=f"Imported from Founder Project: {fp.title}")
+        db.add(act)
+
+        # Write deal reference back to founder project
+        fp.deal_id = deal.id
+        fp.deal_data = {
+            "company_name": fp.title,
+            "raise_amount": deck.get("raise_amount", ""),
+            "sector": "",
+            "score_avg": 0,
+        }
+        if fp.stage in ("mentor_done", "deck_created"):
+            fp.stage = "deal_opened"
+
+        db.commit()
+        _track("deal_imported_from_project", p["sub"], deal.id, {"founder_project_id": fp.id})
+
+        return {
+            "submission_id": sub.id,
+            "deal_id": deal.id,
+            "deal": _deal_dict(deal),
+            "founder_project_stage": fp.stage,
+        }
+    finally: db.close()
+
+
+def _founder_project_dict(p: FounderProject) -> dict:
+    return {
+        "id": p.id, "title": p.title, "stage": p.stage,
+        "mentor_notes": p.mentor_notes, "deck_id": p.deck_id,
+        "deck_summary": p.deck_summary, "deal_id": p.deal_id,
+        "deal_data": p.deal_data, "contract_id": p.contract_id,
+        "contract_data": p.contract_data,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+    }
 
 # ── Stats ─────────────────────────────────────────────────────────────────
 

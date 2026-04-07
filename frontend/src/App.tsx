@@ -91,6 +91,23 @@ export default function App() {
     openDeal(dealId)
   }
 
+  async function importFromFounderProject(projectId: string) {
+    if (!token) return
+    setLoading(true)
+    try {
+      const r = await fetch(`${API}/founder-projects/import`, {
+        method: 'POST', headers: authHeaders(token),
+        body: JSON.stringify({ project_id: projectId }),
+      })
+      if (r.ok) {
+        const data = await r.json()
+        setView('pipeline') // triggers reload
+        if (data.deal_id) await openDeal(data.deal_id)
+      }
+    } catch { /* ignore */ }
+    setLoading(false)
+  }
+
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
       {/* Founder Toolkit cross-app nav */}
@@ -133,7 +150,7 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {view === 'home' && <HomePage onNavigate={setView} />}
-        {view === 'pipeline' && <PipelinePage deals={deals} onOpen={openDeal} />}
+        {view === 'pipeline' && <PipelinePage deals={deals} onOpen={openDeal} onImport={importFromFounderProject} token={token} loading={loading} />}
         {view === 'deal-detail' && activeDeal && <DealDetailPage deal={activeDeal} token={token!} onBack={() => setView('pipeline')} onMove={moveStage} onScore={updateScorecard} onMemo={generateMemo} onNote={addNote} loading={loading} onFetchContacts={fetchDealContacts} onLinkContact={linkContactToDeal} />}
         {view === 'submit' && <SubmitPage onSubmit={submitDeal} />}
         {view === 'analytics' && token && <AnalyticsPage token={token} />}
@@ -161,10 +178,55 @@ function HomePage({ onNavigate }: { onNavigate: (v: View) => void }) {
 
 // ── Kanban Pipeline ──────────────────────────────────────────────────────
 
-function PipelinePage({ deals, onOpen }: { deals: Deal[]; onOpen: (id: string) => void }) {
+function PipelinePage({ deals, onOpen, onImport, token, loading }: {
+  deals: Deal[]; onOpen: (id: string) => void
+  onImport: (projectId: string) => void; token: string | null; loading: boolean
+}) {
+  const [founderProjects, setFounderProjects] = useState<Array<{id: string; title: string; stage: string; deck_summary: Record<string, string> | null; mentor_notes: Record<string, string> | null}>>([])
+  const [showImport, setShowImport] = useState(false)
+
+  useEffect(() => {
+    if (showImport && token) {
+      fetch(`${API}/founder-projects`, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => setFounderProjects(d.projects || [])).catch(() => {})
+    }
+  }, [showImport, token])
+
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-white">Deal Pipeline</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-white">Deal Pipeline</h1>
+        <button onClick={() => setShowImport(!showImport)} className="text-sm bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded-lg text-white transition flex items-center gap-1">
+          <Download size={14} /> Import from Project
+        </button>
+      </div>
+      {showImport && (
+        <div className="bg-[#12121a] border border-indigo-500/30 rounded-xl p-4 space-y-3">
+          <div className="text-sm font-medium text-indigo-400">Import from Founder Project</div>
+          <p className="text-xs text-gray-500">Create a deal from a Founder Project with mentor notes and deck data.</p>
+          {founderProjects.length === 0 ? (
+            <p className="text-xs text-gray-500">No founder projects found. Create one in MentorForge first.</p>
+          ) : (
+            <div className="space-y-2">
+              {founderProjects.filter(p => !p.deck_summary || p.stage !== 'deal_opened').map(fp => (
+                <div key={fp.id} className="flex items-center justify-between bg-[#0a0a0f] border border-gray-800 rounded-lg p-3">
+                  <div>
+                    <div className="text-sm text-white font-medium">{fp.title}</div>
+                    <div className="text-xs text-gray-500">
+                      Stage: {fp.stage} {fp.deck_summary ? `| Deck: ${fp.deck_summary.slide_count} slides` : ''}
+                    </div>
+                  </div>
+                  <button onClick={() => { onImport(fp.id); setShowImport(false) }}
+                    disabled={loading}
+                    className="text-xs bg-violet-600 hover:bg-violet-500 disabled:bg-gray-700 text-white px-3 py-1.5 rounded-lg transition">
+                    {loading ? 'Importing...' : 'Create Deal'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-6 gap-3 min-h-[500px]">
         {STAGES.map(stage => {
           const stageDeals = deals.filter(d => d.stage === stage)
