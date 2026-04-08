@@ -122,19 +122,24 @@ export default function App() {
               <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">1</span>
               Mentor
             </a>
-            <div className="w-4 h-[1px] bg-gray-700 mx-0.5" />
-            <a href="https://pitchdeckforge.vercel.app" className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-orange-400 transition px-1.5 py-0.5">
+            <div className="w-3 h-[1px] bg-gray-700 mx-0.5" />
+            <span className="flex items-center gap-1 text-[11px] text-gray-500 px-1.5 py-0.5">
               <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">2</span>
+              Build
+            </span>
+            <div className="w-3 h-[1px] bg-gray-700 mx-0.5" />
+            <a href="https://pitchdeckforge.vercel.app" className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-orange-400 transition px-1.5 py-0.5">
+              <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">3</span>
               Deck
             </a>
-            <div className="w-4 h-[1px] bg-gray-700 mx-0.5" />
+            <div className="w-3 h-[1px] bg-gray-700 mx-0.5" />
             <span className="flex items-center gap-1 text-[11px] font-semibold text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full">
-              <span className="w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center text-[9px] font-bold text-white">3</span>
+              <span className="w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center text-[9px] font-bold text-white">4</span>
               Pipeline
             </span>
-            <div className="w-4 h-[1px] bg-gray-700 mx-0.5" />
+            <div className="w-3 h-[1px] bg-gray-700 mx-0.5" />
             <a href="https://contract-concierge-pi.vercel.app" className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-emerald-400 transition px-1.5 py-0.5">
-              <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">4</span>
+              <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">5</span>
               Contracts
             </a>
           </div>
