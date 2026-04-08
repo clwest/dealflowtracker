@@ -118,27 +118,25 @@ export default function App() {
             <span className="text-[11px] font-medium text-gray-400">Founder Toolkit</span>
           </a>
           <div className="flex items-center gap-1">
-            {[
-              { step: 1, label: 'Mentor', href: 'https://mentorforge.vercel.app', active: false, color: 'indigo' },
-              { step: 2, label: 'Deck', href: 'https://pitchdeckforge.vercel.app', active: false, color: 'orange' },
-              { step: 3, label: 'Pipeline', href: '', active: true, color: 'violet' },
-              { step: 4, label: 'Contracts', href: 'https://contract-concierge-pi.vercel.app', active: false, color: 'emerald' },
-            ].map((s, i) => (
-              <div key={s.step} className="flex items-center">
-                {i > 0 && <div className="w-4 h-[1px] bg-gray-700 mx-0.5" />}
-                {s.active ? (
-                  <span className={`flex items-center gap-1 text-[11px] font-semibold text-${s.color}-400 bg-${s.color}-500/10 px-2 py-0.5 rounded-full`}>
-                    <span className={`w-4 h-4 rounded-full bg-${s.color}-500 flex items-center justify-center text-[9px] font-bold text-white`}>{s.step}</span>
-                    {s.label}
-                  </span>
-                ) : (
-                  <a href={s.href} className={`flex items-center gap-1 text-[11px] text-gray-500 hover:text-${s.color}-400 transition px-1.5 py-0.5`}>
-                    <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">{s.step}</span>
-                    {s.label}
-                  </a>
-                )}
-              </div>
-            ))}
+            <a href="https://mentorforge.vercel.app" className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-indigo-400 transition px-1.5 py-0.5">
+              <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">1</span>
+              Mentor
+            </a>
+            <div className="w-4 h-[1px] bg-gray-700 mx-0.5" />
+            <a href="https://pitchdeckforge.vercel.app" className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-orange-400 transition px-1.5 py-0.5">
+              <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">2</span>
+              Deck
+            </a>
+            <div className="w-4 h-[1px] bg-gray-700 mx-0.5" />
+            <span className="flex items-center gap-1 text-[11px] font-semibold text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full">
+              <span className="w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center text-[9px] font-bold text-white">3</span>
+              Pipeline
+            </span>
+            <div className="w-4 h-[1px] bg-gray-700 mx-0.5" />
+            <a href="https://contract-concierge-pi.vercel.app" className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-emerald-400 transition px-1.5 py-0.5">
+              <span className="w-4 h-4 rounded-full bg-gray-800 flex items-center justify-center text-[9px] text-gray-500">4</span>
+              Contracts
+            </a>
           </div>
         </div>
       </div>
