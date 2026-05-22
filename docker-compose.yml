@@ -37,7 +37,12 @@ services:
       SECRET_KEY: ${SECRET_KEY:-dev-only-rotate-me}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5178}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5178}
+      BRAIN_URL: ${BRAIN_URL:-http://host.docker.internal:8000}
+      BRAIN_TOKEN: ${BRAIN_TOKEN:-}
+      BRAIN_CONVERSATION: ${BRAIN_CONVERSATION:-}
       PORT: "8006"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8006:8006"
     networks:

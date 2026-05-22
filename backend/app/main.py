@@ -50,6 +50,25 @@ class LinkContact(BaseModel): contact_id: str; role_in_deal: str = "investor"
 @app.get("/api/health")
 def health(): return {"status": "healthy", "service": "DealFlowTracker"}
 
+
+# ── Brain bridge — proxy questions to u-d-b's PA (Rigby) ───────────────────
+
+class BrainAskRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+
+
+@app.post("/api/brain/ask")
+def brain_ask(req: BrainAskRequest, p: dict = Depends(decode_token)):
+    from app.brain_client import ask
+    if not req.message.strip():
+        raise HTTPException(400, "message is required")
+    result = ask(req.message, conversation_id=req.conversation_id,
+                 workspace="dealflowtracker", user_id=p.get("sub"))
+    if not result.get("ok"):
+        raise HTTPException(502, result.get("error", "brain unreachable"))
+    return result
+
 def _track(event_type: str, user_id: str = None, resource_id: str = None, metadata: dict = None):
     db = SessionLocal()
     try:
