@@ -1,0 +1,27 @@
+# DealFlowTracker — dev overlay
+
+services:
+  dealflowtracker_api:
+    command: >
+      sh -c "python -m app.seed && uvicorn app.main:app
+             --host 0.0.0.0 --port 8006 --reload --reload-dir /app"
+    volumes:
+      - ./backend:/app
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+
+  dealflowtracker_web:
+    image: node:20-slim
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5178"
+    volumes:
+      - ./frontend:/app
+      - dealflowtracker_node_modules:/app/node_modules
+    ports:
+      - "5178:5178"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8006/api}
+
+volumes:
+  dealflowtracker_node_modules:
+    name: dealflowtracker_node_modules

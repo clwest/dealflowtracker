@@ -1,8 +1,14 @@
 """DealFlowTracker — Seed demo data"""
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from sqlalchemy.orm import sessionmaker
 from app.models import User, Submission, Deal, Activity, DealStage, init_db, get_engine
 from app.auth import hash_password
-DATABASE_URL = "sqlite:///./dealflow.db"
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dealflow.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 DEALS = [
     {"company_name": "NeuralShip", "one_liner": "AI-powered supply chain optimization", "sector": "Logistics/AI", "raise_amount": "$3M", "traction": "15 enterprise pilots, $200K ARR", "founder_name": "Alex Rivera", "website": "neuralship.ai", "stage": "review"},
