@@ -105,6 +105,33 @@ class TestSigningHeadersOnFleetEndpoints:
                 f"missing required signing header: {header_name}"
             )
 
+    def test_list_artifacts_signs_request(self):
+        """Move 2 Round 2 — list_artifacts must sign too. The GET path
+        includes querystring in the signature base; the signer must
+        canonicalize correctly. This test guards the contract."""
+        from app.brain_client import list_artifacts
+
+        fake_urlopen, captured = _capture_request(
+            method_response_body=b'{"count":0,"limit":25,"offset":0,"next_offset":null,"results":[]}',
+            status_code=200,
+        )
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            list_artifacts(limit=10, artifact_type="test")
+
+        assert len(captured) == 1
+        req = captured[0]
+        assert req.method == "GET"
+        for header_name in (
+            "X-Fleet-App",
+            "X-Fleet-Key-Id",
+            "X-Fleet-Timestamp",
+            "X-Fleet-Nonce",
+            "X-Fleet-Signature",
+        ):
+            assert _header_present(req, header_name), (
+                f"GET /api/fleet/artifacts/ must sign: missing {header_name}"
+            )
+
     def test_pa_chat_ask_also_signs(self):
         """The brain bridge `/api/pa/chat/` call should sign too — it's not
         fleet-only, but signing is what gates routing-block enforcement."""
