@@ -368,3 +368,90 @@ def pull_artifact(artifact_id: str) -> dict[str, Any]:
         "ok": True,
         "artifact": response,
     }
+
+
+def list_artifacts(
+    *,
+    limit: int = 25,
+    offset: int = 0,
+    artifact_type: Optional[str] = None,
+    created_after: Optional[str] = None,
+    created_before: Optional[str] = None,
+    include_expired: bool = False,
+    include_deleted: bool = False,
+) -> dict[str, Any]:
+    """List this app's own fleet artifacts. Move 2 Round 2.
+
+    Calls u-d-b's `GET /api/fleet/artifacts/` — auto-scoped to this
+    app's identity (server-side: caller's `app_slug` derived from
+    signature). Cross-app artifacts are never returned regardless of
+    query params.
+
+    Args:
+        limit: page size (server clamps to 100).
+        offset: page offset for pagination.
+        artifact_type: optional exact-match filter.
+        created_after: ISO-8601 datetime (inclusive lower bound).
+        created_before: ISO-8601 datetime (exclusive upper bound).
+        include_expired: when True, include rows past their TTL.
+        include_deleted: when True, include soft-deleted rows.
+
+    Returns dict:
+        ok (bool), count (int — total matching), limit (int — echoed
+        post-clamp), offset (int), next_offset (int | None — next
+        page's offset, or None when no more pages), results (list of
+        summary dicts, no payload bodies), error (str on failure).
+    """
+    base = os.environ.get("BRAIN_URL", DEFAULT_URL).rstrip("/")
+    host_override = os.environ.get("BRAIN_HOST_HEADER", "localhost")
+
+    # Build querystring deterministically; canonicalization happens
+    # server-side via `_canonicalize_querystring`. Our signer must use
+    # the SAME ordering for the signature to match — easiest: pass an
+    # alphabetically-sorted list of (key, value) pairs.
+    import urllib.parse as _urlparse
+    params: list[tuple[str, str]] = []
+    if limit is not None:
+        params.append(("limit", str(limit)))
+    if offset is not None:
+        params.append(("offset", str(offset)))
+    if artifact_type is not None:
+        params.append(("artifact_type", artifact_type))
+    if created_after is not None:
+        params.append(("created_after", created_after))
+    if created_before is not None:
+        params.append(("created_before", created_before))
+    if include_expired:
+        params.append(("include_expired", "true"))
+    if include_deleted:
+        params.append(("include_deleted", "true"))
+    query = _urlparse.urlencode(params) if params else ""
+
+    fleet_path = "/api/fleet/artifacts/"
+    url = f"{base}{fleet_path}" + (f"?{query}" if query else "")
+    response, status = _http_request(
+        url,
+        "GET",
+        data=None,
+        token=None,
+        host_header=host_override,
+        fleet_path=fleet_path,
+        fleet_query=query,
+    )
+    if status != 200:
+        err = response.get("error") if isinstance(response, dict) else None
+        return {
+            "ok": False,
+            "error": (err.get("message") if isinstance(err, dict) else None)
+                     or response.get("error")
+                     or f"list_artifacts returned HTTP {status}",
+            "status_code": status,
+        }
+    return {
+        "ok": True,
+        "count": response.get("count", 0),
+        "limit": response.get("limit", limit),
+        "offset": response.get("offset", offset),
+        "next_offset": response.get("next_offset"),
+        "results": response.get("results", []),
+    }
