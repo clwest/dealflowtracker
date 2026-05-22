@@ -72,11 +72,11 @@ def _http_request(
 ) -> tuple[dict, int]:
     """Issue an HTTP request to u-d-b.
 
-    When FLEET_* env vars are set, also computes and attaches the
-    X-Fleet-* signature headers per Move 1 of the fleet routing arc.
-    `fleet_path` is the canonical path used in the signature base
-    (e.g. ``/api/pa/chat/``) — the caller knows the path; we don't
-    re-parse the URL to extract it.
+    When `fleet_path` is provided AND the FLEET_* env vars are set,
+    attaches the X-Fleet-* signature headers per Move 1 of the fleet
+    routing arc. `fleet_path` is the canonical path used in the
+    signature base (e.g. ``/api/pa/chat/``) — the caller knows the
+    path; we don't re-parse the URL to extract it.
     """
     headers = {"Content-Type": "application/json"}
     if token:
@@ -95,11 +95,11 @@ def _http_request(
         method=method,
     )
 
-    # Sign request if fleet env vars set (FLEET_APP_SLUG +
+    # Sign request when fleet env vars set (FLEET_APP_SLUG +
     # FLEET_KEY_ID + FLEET_SERVICE_SECRET). When absent we silently
-    # skip signing — the request still reaches u-d-b via user-auth
-    # token; any routing block claim will be stripped server-side
-    # (Move 1 enforcement).
+    # skip signing — request still reaches u-d-b via user-auth token
+    # if any. Fleet-only endpoints (artifacts) will hard-reject
+    # unsigned requests at u-d-b.
     if fleet_path:
         try:
             from app.fleet_signer import fleet_signature_headers
@@ -115,6 +115,7 @@ def _http_request(
         except Exception:
             # Signing must never block the request; fall through unsigned.
             pass
+
     try:
         resp = urllib.request.urlopen(req, timeout=30)
         return json.loads(resp.read()), resp.status
@@ -217,10 +218,7 @@ def ask(
 
     host_override = os.environ.get("BRAIN_HOST_HEADER", "localhost")
     submit, status = _http_request(
-        f"{base}/api/pa/chat/",
-        "POST",
-        payload,
-        token,
+        f"{base}/api/pa/chat/", "POST", payload, token,
         host_header=host_override,
         fleet_path="/api/pa/chat/",
     )
@@ -273,4 +271,100 @@ def ask(
         "error": f"PA task did not complete within {timeout_seconds}s",
         "trace_id": task_id,
         "request_id": resolved_request_id,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Fleet artifacts — Session 1129 Move 2 Round 1
+# ──────────────────────────────────────────────────────────────────────
+
+
+def push_artifact(
+    payload,
+    artifact_type: str,
+    *,
+    metadata: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Push a work-product artifact to u-d-b for later retrieval.
+
+    Requires the FLEET_* env vars to be configured (otherwise fleet
+    signing is skipped and u-d-b will hard-reject the request as
+    unauthenticated).
+
+    Args:
+        payload: JSON-serializable artifact body.
+        artifact_type: short type tag (e.g. "contract_draft").
+        metadata: optional caller-supplied tags.
+
+    Returns dict:
+        ok (bool), id (str on success), sha256 (str), size_bytes (int),
+        created_at (str), error (str on failure).
+    """
+    base = os.environ.get("BRAIN_URL", DEFAULT_URL).rstrip("/")
+    host_override = os.environ.get("BRAIN_HOST_HEADER", "localhost")
+    body_dict = {
+        "artifact_type": artifact_type,
+        "payload": payload,
+        "metadata": metadata or {},
+    }
+    response, status = _http_request(
+        f"{base}/api/fleet/artifacts/",
+        "POST",
+        body_dict,
+        token=None,  # fleet-only endpoint; no PA token
+        host_header=host_override,
+        fleet_path="/api/fleet/artifacts/",
+    )
+    if status != 201:
+        err = response.get("error") if isinstance(response, dict) else None
+        return {
+            "ok": False,
+            "error": (err.get("message") if isinstance(err, dict) else None)
+                     or response.get("error")
+                     or f"push_artifact returned HTTP {status}",
+            "status_code": status,
+        }
+    return {
+        "ok": True,
+        "id": response["id"],
+        "sha256": response["sha256"],
+        "size_bytes": response["size_bytes"],
+        "created_at": response["created_at"],
+        "artifact_type": response["artifact_type"],
+    }
+
+
+def pull_artifact(artifact_id: str) -> dict[str, Any]:
+    """Fetch a previously-pushed artifact by id.
+
+    Only this app's identity can fetch its own artifacts — cross-app
+    fetches return 404 (existence not leaked).
+
+    Returns dict:
+        ok (bool), artifact (dict on success — id/payload/metadata/
+        sha256/size_bytes/created_at/created_by), error (str on failure).
+    """
+    base = os.environ.get("BRAIN_URL", DEFAULT_URL).rstrip("/")
+    host_override = os.environ.get("BRAIN_HOST_HEADER", "localhost")
+    fleet_path = f"/api/fleet/artifacts/{artifact_id}/"
+    response, status = _http_request(
+        f"{base}{fleet_path}",
+        "GET",
+        data=None,
+        token=None,
+        host_header=host_override,
+        fleet_path=fleet_path,
+    )
+    if status != 200:
+        err = response.get("error") if isinstance(response, dict) else None
+        return {
+            "ok": False,
+            "error": (err.get("message") if isinstance(err, dict) else None)
+                     or response.get("error")
+                     or f"pull_artifact returned HTTP {status}",
+            "status_code": status,
+        }
+    return {
+        "ok": True,
+        "artifact": response,
     }
