@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dealflow}
       POSTGRES_USER: ${POSTGRES_USER:-dealflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dealflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-production}
     volumes:
       - dealflowtracker_postgres_data:/var/lib/postgresql/data
     networks:
@@ -31,7 +31,7 @@ services:
       dealflowtracker_postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-dealflow}:${POSTGRES_PASSWORD:-dealflow}@dealflowtracker_postgres:5432/${POSTGRES_DB:-dealflow}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dealflow}:${POSTGRES_PASSWORD:-change-me-in-production}@dealflowtracker_postgres:5432/${POSTGRES_DB:-dealflow}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-gpt-5-mini}
       SECRET_KEY: ${SECRET_KEY:-dev-only-rotate-me}
