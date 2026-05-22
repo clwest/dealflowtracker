@@ -39,7 +39,17 @@ def _http_request(
     data: Optional[dict] = None,
     token: Optional[str] = None,
     host_header: Optional[str] = None,
+    fleet_path: Optional[str] = None,
+    fleet_query: str = "",
 ) -> tuple[dict, int]:
+    """Issue an HTTP request to u-d-b.
+
+    When FLEET_* env vars are set, also computes and attaches the
+    X-Fleet-* signature headers per Move 1 of the fleet routing arc.
+    `fleet_path` is the canonical path used in the signature base
+    (e.g. ``/api/pa/chat/``) — the caller knows the path; we don't
+    re-parse the URL to extract it.
+    """
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Token {token}"
@@ -48,12 +58,35 @@ def _http_request(
     # but the receiving Django still binds localhost / 127.0.0.1).
     if host_header:
         headers["Host"] = host_header
+
+    raw_body = json.dumps(data).encode() if data else b""
     req = urllib.request.Request(
         url,
-        data=json.dumps(data).encode() if data else None,
+        data=raw_body if data else None,
         headers=headers,
         method=method,
     )
+
+    # Sign request if fleet env vars set (FLEET_APP_SLUG +
+    # FLEET_KEY_ID + FLEET_SERVICE_SECRET). When absent we silently
+    # skip signing — the request still reaches u-d-b via user-auth
+    # token; any routing block claim will be stripped server-side
+    # (Move 1 enforcement).
+    if fleet_path:
+        try:
+            from app.fleet_signer import fleet_signature_headers
+            fh = fleet_signature_headers(
+                method=method,
+                path=fleet_path,
+                query=fleet_query,
+                body=raw_body,
+            )
+            if fh:
+                for k, v in fh.items():
+                    req.add_header(k, v)
+        except Exception:
+            # Signing must never block the request; fall through unsigned.
+            pass
     try:
         resp = urllib.request.urlopen(req, timeout=30)
         return json.loads(resp.read()), resp.status
@@ -108,7 +141,12 @@ def ask(
 
     host_override = os.environ.get("BRAIN_HOST_HEADER", "localhost")
     submit, status = _http_request(
-        f"{base}/api/pa/chat/", "POST", payload, token, host_header=host_override
+        f"{base}/api/pa/chat/",
+        "POST",
+        payload,
+        token,
+        host_header=host_override,
+        fleet_path="/api/pa/chat/",
     )
     if status != 200 or not submit.get("success") or not submit.get("task_id"):
         return {
@@ -120,11 +158,13 @@ def ask(
     deadline = started + timeout_seconds
 
     while time.monotonic() < deadline:
+        poll_path = f"/api/pa/chat/status/{task_id}/"
         poll = _http_request(
-            f"{base}/api/pa/chat/status/{task_id}/",
+            f"{base}{poll_path}",
             "GET",
             token=token,
             host_header=host_override,
+            fleet_path=poll_path,
         )[0]
         task_status = poll.get("status", "unknown")
         if task_status == "completed":
