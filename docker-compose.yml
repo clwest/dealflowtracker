@@ -40,6 +40,14 @@ services:
       BRAIN_URL: ${BRAIN_URL:-http://host.docker.internal:8000}
       BRAIN_TOKEN: ${BRAIN_TOKEN:-}
       BRAIN_CONVERSATION: ${BRAIN_CONVERSATION:-}
+      # Session 1133 — fleet HMAC signing for /api/pa/chat/. Without
+      # these, brain_client falls back to bearer-only and u-d-b's
+      # FleetPAChatAuditRow records `auth_mode=bearer_only`. Once set,
+      # brain_client auto-signs and the audit row records
+      # `auth_mode=fleet_signature` with `verified_app_slug=dealflowtracker`.
+      FLEET_APP_SLUG: ${FLEET_APP_SLUG:-dealflowtracker}
+      FLEET_KEY_ID: ${FLEET_KEY_ID:-}
+      FLEET_SERVICE_SECRET: ${FLEET_SERVICE_SECRET:-}
       PORT: "8006"
     extra_hosts:
       - "host.docker.internal:host-gateway"
